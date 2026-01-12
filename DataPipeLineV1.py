@@ -3,7 +3,7 @@ Filename: DataPipeLineV1.py
 
 Author: Carlos A. Guzman-Cruz
 Date: December 2025
-Version: 1.0
+Version: 1.0.2
 Description:
 This files servers to aid in incorporating file scans, file selection, image visualization, 
 image pre-processing, and suite-2p. Main purpose of this is to allow for fast work flows 
@@ -15,7 +15,7 @@ more features feel free to reach out to me and I can help in adding more feature
 
 __author__ = "Carlos A. Guzman-Cruz"
 __email__ = "carguz2002@gmail.com"
-__version__ = "1.0.0"
+__version__ = "1.0.2"
 
 
 
@@ -45,6 +45,7 @@ from scipy.ndimage import gaussian_filter, median_filter
 
 
 h5py_key = "Data/Images"
+# Global caches are used by the widget workflows across functions.
 suite_2p_outputs = {}      # {'OPS_data_file_name': suite2pOutputdictionary}
 data_file_paths = {}       # {'data_file_name': 'path_to_data'}
 select_files_names = []    # ['selected_data_file_name_1','selected_data_file_name_2' , ...]
@@ -57,8 +58,10 @@ selected_files_raw = {}
 
 
 def data_scan():
+    """Scan a user-selected folder for imaging files and populate data_file_paths."""
     global data_file_paths
 
+    # Priority types appear first in the UI list. Most common types are tif and hdf5.
     PRIORITY_EXTS = ('.tif', '.tiff', '.h5', '.hdf5')
     OTHER_EXTS = ('.binary', '.bruker', '.sbx', '.movie',
                   '.nd2', '.mesoscan', '.raw', '.dcimg')
@@ -67,7 +70,9 @@ def data_scan():
     ALL_EXTS = PRIORITY_EXTS + OTHER_EXTS
 
     def scan_folder(root_dir: str):
+        """Walk the directory tree and collect files with supported extensions."""
         global data_file_paths
+        # Clear previous scan results so we only show the latest selection.
         data_file_paths.clear()  
         def walk_and_add(target_exts):
             for dirpath, dirnames, filenames in os.walk(root_dir):
@@ -76,7 +81,7 @@ def data_scan():
                     if ext in target_exts:
                         full_path = os.path.join(dirpath, filename)
                         base_name = os.path.splitext(filename)[0]
-                        # handle possible duplicate names
+                        # Handle duplicate base names across directories.
                         key = base_name
                         suffix = 1
                         while key in data_file_paths:
@@ -85,11 +90,13 @@ def data_scan():
 
                         data_file_paths[key] = os.path.abspath(full_path)
 
+        # Scan priority extensions first, then remaining formats.
         walk_and_add(PRIORITY_EXTS)
         remaining_exts = tuple(ext for ext in ALL_EXTS if ext not in PRIORITY_EXTS)
         walk_and_add(remaining_exts)
 
     try:
+        # FileChooser provides a friendly folder picker when installed.
         chooser = FileChooser(os.getcwd())
         chooser.title = "<b>Select a folder that contains your imaging data</b>"
         chooser.show_only_dirs = True  
@@ -139,6 +146,7 @@ def data_scan():
         display(ui)
 
     except ImportError:
+        # Fallback UI when FileChooser is unavailable.
         dir_text = widgets.Text(
             value=os.getcwd(),
             description="Folder:",
@@ -157,6 +165,7 @@ def data_scan():
         out = widgets.Output()
 
         def perform_scan(selected_dir):
+            """Scan the folder and print a short summary."""
             scan_folder(selected_dir)
             print(f"Scanning directory:\n  {selected_dir}")
             print(f"Found {len(data_file_paths)} data file(s).")
@@ -164,6 +173,7 @@ def data_scan():
                   "or by using `helper.data_file_paths`.")
 
         def on_click(_):
+            # Validate the typed directory, then scan.
             with out:
                 clear_output()
                 selected_dir = dir_text.value.strip()
@@ -173,6 +183,7 @@ def data_scan():
                 perform_scan(selected_dir)
 
         def on_rerun(_):
+            # Reuse the typed directory value for a quick re-scan.
             with out:
                 clear_output()
                 selected_dir = dir_text.value.strip()
@@ -192,11 +203,13 @@ def data_scan():
 
 
 def print_files_found():
+    """Print just the file keys found by data_scan()."""
     global data_file_paths 
     for fileName in data_file_paths.keys():
         print(fileName)
         
 def print_files_and_paths():
+    """Print file keys with their absolute paths."""
     global data_file_paths 
     #print(json.dumps(data_file_paths, indent=4))  
     for files in data_file_paths:
@@ -205,14 +218,17 @@ def print_files_and_paths():
 
 
 def file_selection():
+    """Provide a widget UI to select scanned files and create Suite2p folders."""
     global data_file_paths, select_files_names, selected_files_raw
 
     if not data_file_paths:
         print("No data files found. Please run data_scan() first")
         return
 
+    # Instruction label for the UI.
     label = widgets.HTML("<b>Select the files to prep before running suite2p on:</b>")
 
+    # Create one checkbox per discovered file.
     checkboxes = []
     for file_name in sorted(data_file_paths.keys()):
         path = data_file_paths[file_name]
@@ -227,9 +243,11 @@ def file_selection():
             description=desc,
             indent=False
         )
+        # Attach the key so we can map back to data_file_paths later.
         cb._file_key = file_name
         checkboxes.append(cb)
 
+    # Optionally create Suite2p output folders when saving the selection.
     make_s2p_folders = widgets.Checkbox(
         value=True,
         description="Make Suite2p folders",
@@ -244,10 +262,12 @@ def file_selection():
     out = widgets.Output()
 
     def on_save_clicked(_):
+        """Persist selection and optionally create Suite2p directory structure."""
         global select_files_names, selected_files_raw
         with out:
             clear_output()
 
+            # Collect the checked file keys from the UI.
             selected_names = [cb._file_key for cb in checkboxes if cb.value]
 
             select_files_names.clear()
@@ -260,6 +280,7 @@ def file_selection():
             select_files_names.extend(selected_names)
 
             for data_file_name in selected_names:
+                # Map the selected file key to its absolute path.
                 data_path = data_file_paths.get(data_file_name)
                 if data_path is None:
                     print(f"Warning: '{data_file_name}' not found in data_file_paths. Skipping.")
@@ -267,15 +288,18 @@ def file_selection():
 
                 home_directory_path = os.path.dirname(data_path)
 
+                # Suite2p expects a root with save/fast_disk folders.
                 s2p_root = os.path.join(home_directory_path, f"s2p_{data_file_name}")
                 save_path = os.path.join(s2p_root, "s2p_save")
                 fast_disk_path = os.path.join(s2p_root, "s2p_fd")
 
                 if make_s2p_folders.value:
+                    # Create folders now so Suite2p has a consistent structure.
                     os.makedirs(s2p_root, exist_ok=True)
                     os.makedirs(save_path, exist_ok=True)
                     os.makedirs(fast_disk_path, exist_ok=True)
 
+                # Cache the selection details for later steps.
                 selected_files_raw[data_file_name] = {
                     'data_path': os.path.abspath(data_path),
                     'home_directory_path': os.path.abspath(home_directory_path),
@@ -301,6 +325,7 @@ def file_selection():
 
 
 def run_suite2():
+    """Launch Suite2p with either default or user-specified settings for selected files."""
     global selected_files_raw, suite_2p_outputs, h5py_key
 
     try:
@@ -308,6 +333,7 @@ def run_suite2():
         try:
             from suite2p.default_ops import default_ops
         except Exception:
+            # Some Suite2p versions expose default_ops at the top level.
             import suite2p
             default_ops = suite2p.default_ops
     except ImportError:
@@ -319,12 +345,14 @@ def run_suite2():
         return suite_2p_outputs
 
 
+    # UI controls begin here. These map directly to Suite2p "ops" settings.
     mode_selector = widgets.ToggleButtons(
         options=[("Use defaults", "default"), ("Custom", "custom")],
         description="Settings mode:",
         style={"description_width": "initial"}
     )
 
+    # Sampling rate and HDF5 dataset key are always shown.
     fs_widget = widgets.FloatText(
         value=3.0,
         description="fs",
@@ -339,8 +367,7 @@ def run_suite2():
         style={"description_width": "initial"}
     )
 
-
-    
+    # Basic acquisition settings that are required for correct reconstruction.
     nplanes_w = widgets.IntText(
         value=1,
         description="nplanes",
@@ -366,8 +393,7 @@ def run_suite2():
         style={"description_width": "initial"}
     )
 
-
-    
+    # Output options for files saved by Suite2p.
     preclassify_w = widgets.FloatSlider(
         value=0.0,
         min=0.0,
@@ -427,8 +453,7 @@ def run_suite2():
         indent=False
     )
 
-
-    
+    # Motion correction / registration settings.
     do_registration_w = widgets.Checkbox(
         value=False,
         description="do_registration",
@@ -490,7 +515,7 @@ def run_suite2():
         indent=False
     )
 
-    
+    # Non-rigid registration toggle.
     nonrigid_w = widgets.Checkbox(
         value=False,
         description="nonrigid",
@@ -633,7 +658,7 @@ def run_suite2():
         style={"description_width": "initial"}
     )
 
-    # widgets into sections
+    # Group widgets into sections for a cleaner UI.
     main_box = widgets.VBox([nplanes_w, nchannels_w, functional_chan_w, tau_w])
     output_box = widgets.VBox([
         preclassify_w, save_mat_w, save_NWB_w, combined_w,
@@ -657,6 +682,7 @@ def run_suite2():
         win_baseline_w, sig_baseline_w, neucoeff_w
     ])
 
+    # Accordion lets users expand one section at a time.
     accordion = widgets.Accordion(children=[
         main_box,
         output_box,
@@ -666,6 +692,7 @@ def run_suite2():
         anatomical_box,
         extraction_box
     ])
+    # Titles must match the order of the accordion children.
     titles = [
         "Main Settings",
         "Output Settings",
@@ -685,7 +712,7 @@ def run_suite2():
     )
     out = widgets.Output()
 
-    # All widgets that should be disabled when using defaults 
+    # All widgets that should be disabled when using defaults.
     custom_widgets = [
         nplanes_w, nchannels_w, functional_chan_w, tau_w,
         preclassify_w, save_mat_w, save_NWB_w, combined_w,
@@ -704,6 +731,7 @@ def run_suite2():
     ]
 
     def _update_custom_widgets(mode_value):
+        # Disable the custom widgets when default settings are selected.
         use_custom = (mode_value == "custom")
         for w in custom_widgets:
             w.disabled = not use_custom
@@ -716,6 +744,8 @@ def run_suite2():
     _update_custom_widgets(mode_selector.value)
 
     def _build_ops_update_from_widgets(use_custom):
+        """Collect Suite2p ops overrides from widgets into a dict."""
+        # Start with required parameters that always apply.
         base = {
             "nplanes": nplanes_w.value,
             "nchannels": nchannels_w.value,
@@ -727,6 +757,7 @@ def run_suite2():
         }
 
         if not use_custom:
+            # Use defaults but still respect the non-disabled widgets.
             default_specific = {
                 "do_registration": do_registration_w.value,
                 "nonrigid": nonrigid_w.value,
@@ -815,6 +846,7 @@ def run_suite2():
         return base
 
     def _on_run_clicked(_):
+        """Run Suite2p per selected file and store outputs in suite_2p_outputs."""
         global suite_2p_outputs, h5py_key
         with out:
             clear_output()
@@ -823,8 +855,10 @@ def run_suite2():
             h5py_key = h5py_key_widget.value
 
             use_custom = (mode_selector.value == "custom")
+            # Build the ops overrides once and reuse for each file.
             ops_common = _build_ops_update_from_widgets(use_custom)
 
+            # Collect per-file results here before storing globally.
             results = {}
 
             for data_name, paths in selected_files_raw.items():
@@ -835,6 +869,7 @@ def run_suite2():
                 ext = os.path.splitext(data_path)[1].lower()
 
                 if ext in [".h5", ".hdf5"]:
+                    # HDF5 inputs use a dataset key instead of a folder path.
                     db = {
                         "h5py": data_path,
                         "data_path": [],
@@ -846,6 +881,7 @@ def run_suite2():
                         "h5py_key": h5py_key,
                     }
                 else:
+                    # TIFF inputs point to the parent directory for Suite2p.
                     data_dir = os.path.dirname(data_path)
                     db = {
                         "h5py": [],
@@ -862,6 +898,7 @@ def run_suite2():
                     "fast_disk": str(fast_disk),
                 }
 
+                # Merge defaults, input format, and user overrides.
                 ops = default_ops()
                 ops.update(input_ops)
                 ops.update(path_ops)
@@ -908,6 +945,7 @@ def run_suite2():
 
 
 def gaussian_median_blur_viewer():
+    """Preview Gaussian/median filters on a file and save a processed copy."""
     
     global selected_files_raw, h5py_key
 
@@ -915,6 +953,7 @@ def gaussian_median_blur_viewer():
         print("No files selected. Please run file_selection() first.")
         return
 
+    # Select which file to preview and process.
     file_dropdown = widgets.Dropdown(
         options=list(selected_files_raw.keys()),
         description='Select File:',
@@ -934,13 +973,14 @@ def gaussian_median_blur_viewer():
         style={'description_width': 'initial'}
     )
 
-
+    # Filter selection (only one filter can be active at a time).
     gauss_check = widgets.Checkbox(value=False, description='Gaussian Blur')
     median_check = widgets.Checkbox(value=False, description='Median Blur')
     
     gauss_slider = widgets.IntSlider(value=1, min=1, max=8, description='Sigma:', disabled=True)
     median_slider = widgets.IntSlider(value=1, min=1, max=8, description='Size:', disabled=True)
     
+    # Preview slider chooses which frame to display.
     frame_slider = widgets.IntSlider(value=0, min=0, max=100, step=1, description='Frame:', continuous_update=False)
 
     save_btn = widgets.Button(
@@ -954,6 +994,7 @@ def gaussian_median_blur_viewer():
     img_out = widgets.Output()
     log_out = widgets.Output()
 
+    # State variables shared across callbacks.
     current_data_source = None 
     current_dataset = None     
     current_file_path = ""
@@ -963,6 +1004,8 @@ def gaussian_median_blur_viewer():
 
 
     def toggle_controls(change):
+        """Ensure only one filter type is enabled at a time."""
+        # Enforce mutually exclusive selection between Gaussian and Median.
         if change['owner'] == gauss_check and change['new']:
             median_check.value = False
             gauss_slider.disabled = False
@@ -979,6 +1022,7 @@ def gaussian_median_blur_viewer():
         update_preview()
 
     def load_file(_):
+        """Load file metadata and prepare the preview buffer."""
         nonlocal current_data_source, current_dataset, current_file_path, current_ext, total_frames, img_shape
         
         fname = file_dropdown.value
@@ -996,6 +1040,7 @@ def gaussian_median_blur_viewer():
                     try: current_data_source.close()
                     except: pass
                 
+                # HDF5 datasets require a key to the image stack.
                 current_data_source = h5py.File(current_file_path, 'r')
                 
                 key = key_input.value
@@ -1013,6 +1058,7 @@ def gaussian_median_blur_viewer():
                 total_frames = img_shape[0]
 
             elif current_ext in ['.tif', '.tiff']:
+                # TIFF stacks can be memmapped to avoid loading everything.
                 current_data_source = tifffile.memmap(current_file_path)
                 current_dataset = current_data_source # functions as array
                 img_shape = current_dataset.shape
@@ -1034,6 +1080,8 @@ def gaussian_median_blur_viewer():
                 print(f"Error loading file: {e}")
 
     def get_processed_frame(idx):
+        """Apply the selected filter to a single frame for preview."""
+        # Pull a single 2D frame; avoid loading the full stack.
         raw = current_dataset[idx, :, :]
         
         if gauss_check.value:
@@ -1046,10 +1094,12 @@ def gaussian_median_blur_viewer():
             return raw
 
     def update_preview(_=None):
+        """Render the currently selected frame to the output widget."""
         if current_dataset is None: return
         
         frame_idx = frame_slider.value
         
+        # Apply the active filter (if any) before plotting.
         img_data = get_processed_frame(frame_idx)
 
         with img_out:
@@ -1061,6 +1111,7 @@ def gaussian_median_blur_viewer():
             plt.show()
 
     def save_changes(_):
+        """Apply the selected filter across the full stack and save a copy."""
         if current_dataset is None: return
         
         if gauss_check.value:
@@ -1099,6 +1150,7 @@ def gaussian_median_blur_viewer():
                         start = i * batch_size
                         end = min((i + 1) * batch_size, total_frames)
                         
+                        # Read a chunk from disk to keep memory usage reasonable.
                         block = current_dataset[start:end]
                         
                         if gauss_check.value:
@@ -1110,6 +1162,7 @@ def gaussian_median_blur_viewer():
                         elif median_check.value:
                             processed_block = np.array([median_filter(frame, size=param) for frame in block])
                         
+                        # Write the processed chunk into the output file.
                         dset_out[start:end] = processed_block
                         
                         if i % 2 == 0:
@@ -1122,6 +1175,7 @@ def gaussian_median_blur_viewer():
                         start = i * batch_size
                         end = min((i + 1) * batch_size, total_frames)
                         
+                        # TIFF memmap slicing still returns an in-memory block.
                         block = current_dataset[start:end]
                         
                         if gauss_check.value:
@@ -1129,6 +1183,7 @@ def gaussian_median_blur_viewer():
                         elif median_check.value:
                             processed_block = np.array([median_filter(frame, size=param) for frame in block])
                         
+                        # Append the processed frames to the output TIFF.
                         tif.write(processed_block, contiguous=True)
                         
                         with log_out:
@@ -1172,6 +1227,7 @@ def gaussian_median_blur_viewer():
 
 
 def run_deconv():
+    """Interactive Richardson-Lucy deconvolution UI for TIFF/HDF5 stacks."""
     import numpy as np
     import os, re
     import matplotlib.pyplot as plt
@@ -1188,6 +1244,7 @@ def run_deconv():
 
     global data_file_paths, selected_files_raw, h5py_key
     
+    # Toggle between picking a scanned file or typing a manual path.
     mode_select = widgets.ToggleButtons(
         options=[('Use scanned file', 'scanned'), ('Manual path', 'manual')],
         value='scanned',
@@ -1199,17 +1256,20 @@ def run_deconv():
         scanned_options = list(selected_files_raw.keys())
     elif data_file_paths:
         scanned_options = list(data_file_paths.keys())
+    # Dropdown holds file keys from the scan/selection cache.
     file_dropdown = widgets.Dropdown(
         options=scanned_options,
         description='Select File:',
         style={'description_width': 'initial'}
     )
+    # Manual path entry allows files outside the scanned folders.
     manual_path = widgets.Text(
         value='',
         description='File Path:',
         placeholder='Enter full path to file',
         style={'description_width': 'initial'}
     )
+    # HDF5 dataset key for files with .h5/.hdf5 extension.
     h5_key_input = widgets.Text(
         value=h5py_key,
         description='HDF5 Key:',
@@ -1217,6 +1277,7 @@ def run_deconv():
     )
     file_select_container = widgets.VBox([file_dropdown])
     
+    # PSF inputs can be auto-filled from metadata when available.
     auto_psf_check = widgets.Checkbox(
         value=True,
         description='Generate theoretical PSF from metadata/defaults',
@@ -1275,6 +1336,7 @@ def run_deconv():
     img_out = widgets.Output()   
     log_out = widgets.Output()    
     
+    # Shared state for the currently loaded stack.
     current_data_source = None   
     current_dataset = None       
     current_file_path = ""
@@ -1282,6 +1344,7 @@ def run_deconv():
     total_frames = 0
     
     def on_mode_change(change):
+        """Swap between scanned-file dropdown and manual path input."""
         if change['name'] == 'value':
             with log_out:
                 clear_output()
@@ -1292,12 +1355,14 @@ def run_deconv():
     mode_select.observe(on_mode_change, names='value')
     
     def load_file_action(_):
+        """Load the selected dataset and populate preview metadata."""
         nonlocal current_data_source, current_dataset, current_file_path, current_ext, total_frames
         with log_out:
             clear_output()
         img_out.clear_output()
         
         if mode_select.value == 'scanned':
+            # Resolve a scanned key to an absolute file path.
             if not file_dropdown.value:
                 with log_out:
                     print("No file selected. Please select a file from the list or switch to manual mode.")
@@ -1312,6 +1377,7 @@ def run_deconv():
                     print(f"File \"{fname_key}\" not found in scanned list. Please rescan or use manual path.")
                 return
         else:
+            # Use the manual path exactly as provided by the user.
             if not manual_path.value:
                 with log_out:
                     print("Please enter a file path.")
@@ -1325,6 +1391,7 @@ def run_deconv():
         current_ext = os.path.splitext(current_file_path)[1].lower()
         try:
             if current_ext in ['.h5', '.hdf5']:
+                # HDF5 files require selecting a dataset key.
                 if current_data_source:
                     try:
                         current_data_source.close()
@@ -1335,6 +1402,7 @@ def run_deconv():
                 if key not in current_data_source:
                     if '/' in key:
                         try:
+                            # Allow nested HDF5 paths like "group/subgroup/dset".
                             dset = current_data_source
                             for k in key.split('/'):
                                 if k:
@@ -1369,9 +1437,11 @@ def run_deconv():
                 print(f"Error loading file: {e}")
             return
         
+        # Persist the last-used HDF5 key for future calls.
         h5py_key = h5_key_input.value
         
         if auto_psf_check.value and current_ext in ['.tif', '.tiff']:
+            # Try to parse pixel size and NA from common TIFF metadata blocks.
             try:
                 tf = current_data_source  # TiffFile object
                 if hasattr(tf, 'ome_metadata') and tf.ome_metadata:
@@ -1413,6 +1483,7 @@ def run_deconv():
             except Exception as e:
                 pass
         
+        # Attempt to report the per-frame dimensions for the user.
         frame_shape = None
         try:
             frame_shape = current_dataset.shape[1:]  # (Y, X)
@@ -1440,6 +1511,7 @@ def run_deconv():
         update_preview()
     
     def generate_psf_kernel():
+        """Generate a 2D Gaussian PSF kernel from metadata and user inputs."""
         # Get parameters
         lam_nm = wavelength_input.value
         na_val = na_input.value
@@ -1471,6 +1543,7 @@ def run_deconv():
         return psf_2d.astype(np.float32)
     
     def update_preview(_=None):
+        """Run a quick deconvolution on frame 0 and display before/after."""
         img_out.clear_output(wait=True)
         if current_dataset is None:
             return
@@ -1482,6 +1555,7 @@ def run_deconv():
                 print(f"Error reading frame {frame_idx}: {e}")
             return
         psf_kernel = generate_psf_kernel()
+        # Deconvolution expects a 3D volume, so wrap the 2D frame.
         data_vol = raw_frame[np.newaxis, ...].astype(np.float32)
         psf_vol = psf_kernel[np.newaxis, ...].astype(np.float32)
         method = method_toggle.value
@@ -1515,10 +1589,12 @@ def run_deconv():
             plt.show()
     
     def save_deconvolution(_):
+        """Deconvolve the entire stack and save to a new file."""
         if current_dataset is None:
             with log_out:
                 print("No data loaded. Please load a file first.")
             return
+        # Output file is written alongside the original with a "deconv_" prefix.
         base_dir = os.path.dirname(current_file_path)
         base_name = os.path.basename(current_file_path)
         out_name = "deconv_" + base_name
@@ -1556,6 +1632,7 @@ def run_deconv():
                     block = current_dataset[start:end]  # this will be a numpy array (h5py returns numpy on slicing)
                     block = block.astype(np.float32, copy=False)
                     result_block = np.empty_like(block)
+                    # Process each frame to avoid 3D temporal filtering.
                     for j, frame in enumerate(block):
                         data_vol = frame[np.newaxis, ...]  # shape (1,Y,X)
                         try:
@@ -1576,6 +1653,7 @@ def run_deconv():
                         block = current_dataset[start:end]  # memmap slicing returns numpy array
                         block = block.astype(np.float32, copy=False)
                         result_block = []
+                        # Deconvolve frame-by-frame to avoid temporal mixing.
                         for frame in block:
                             data_vol = frame[np.newaxis, ...]
                             try:
@@ -1631,6 +1709,7 @@ def run_deconv():
 
 
 def detection_plots(data_OPS):
+    """Plot Suite2p detection summaries (ROIs vs max/mean images)."""
     from pathlib import Path
     import numpy as np
     import suite2p
@@ -1641,9 +1720,11 @@ def detection_plots(data_OPS):
     stats_file = save_dir / "stat.npy"
     iscell_file = save_dir / "iscell.npy"
 
+    # Load Suite2p ROI stats and cell classification.
     stats = np.load(stats_file, allow_pickle=True)
     iscell = np.load(iscell_file, allow_pickle=True)[:, 0].astype(bool)
 
+    # Build ROI label image stack for plotting.
     im = suite2p.ROI.stats_dicts_to_3d_array(
         stats,
         Ly=data_OPS["Ly"],
@@ -1652,9 +1733,11 @@ def detection_plots(data_OPS):
     )
     im[im == 0] = np.nan
 
+    # Background images from Suite2p ops for context.
     max_proj = data_OPS["max_proj"]
     mean_img = data_OPS.get("meanImg", data_OPS.get("meanImgE", max_proj))
 
+    # Collapse ROI labels into single 2D images for plotting.
     all_rois = np.nanmax(im, axis=0)
 
     if (~iscell).any():
@@ -1742,6 +1825,7 @@ def detection_plots(data_OPS):
 
 
 def graph_traces(data_OPS):
+    """Plot fluorescence/neuropil/deconvolved traces with a ROI selector."""
     from pathlib import Path
     import numpy as np
     import plotly.graph_objects as go
@@ -1751,10 +1835,12 @@ def graph_traces(data_OPS):
     fneu_path = save_dir / "Fneu.npy"
     spks_path = save_dir / "spks.npy"
 
+    # Ensure all required Suite2p outputs are present.
     if not f_path.exists() or not fneu_path.exists() or not spks_path.exists():
         print("F.npy, Fneu.npy, or spks.npy not found in", str(save_dir))
         return None
 
+    # Load fluorescence, neuropil, and spike estimates.
     f_cells = np.load(f_path)
     f_neuropils = np.load(fneu_path)
     spks = np.load(spks_path)
@@ -1774,20 +1860,24 @@ def graph_traces(data_OPS):
         return None
 
     if n_cells > 20:
+        # Downsample ROI list for readability.
         step = max(1, n_cells // 20)
         rois = np.arange(n_cells)[::step]
     else:
         rois = np.arange(n_cells)
 
+    # X-axis is frame index for all traces.
     x = np.arange(n_frames)
 
     fig = go.Figure()
 
     for idx, roi in enumerate(rois):
+        # Pull traces for a single ROI.
         f = f_cells[roi]
         f_neu = f_neuropils[roi]
         sp = spks[roi].astype(float)
 
+        # Scale spikes to fluorescence range for overlay.
         fmax = np.maximum(f.max(), f_neu.max())
         fmin = np.minimum(f.min(), f_neu.min())
         frange = fmax - fmin if fmax > fmin else 1.0
@@ -1799,6 +1889,7 @@ def graph_traces(data_OPS):
 
         visible_state = (idx == 0)
 
+        # Add three traces per ROI (cell, neuropil, deconvolved).
         fig.add_trace(
             go.Scatter(
                 x=x,
@@ -1835,6 +1926,7 @@ def graph_traces(data_OPS):
     buttons = []
     n_rois = len(rois)
 
+    # Build a dropdown that toggles visibility for one ROI at a time.
     for idx, roi in enumerate(rois):
         vis = []
         for k in range(n_rois):
@@ -1881,3 +1973,169 @@ def graph_traces(data_OPS):
     return fig
 
 
+
+
+
+
+def cascade_spike_inference():
+    """
+    Run CASCADE spike inference on Suite2p results.
+    Provides a UI to select the dataset and model, then computes spike probability traces.
+    Saves the output as a .npy file in the Suite2p result folder and returns a dict of outputs.
+    """
+    import os, math
+    import numpy as np
+    import ipywidgets as widgets
+    from IPython.display import display, clear_output
+    
+    global suite_2p_outputs, cascade_outputs, select_files_names, selected_files_raw
+    try:
+        from cascade2p import cascade  # CASCADE library
+    except ImportError:
+        print("CASCADE (cascade2p) is not installed. Please install the Cascade repository or pip-install it before running this function.")
+        return {}
+    if not suite_2p_outputs:
+        print("No Suite2p outputs found. Please run run_suite2() first.")
+        return {}
+    # Initialize cascade_outputs dict if not already
+    if 'cascade_outputs' not in globals():
+        cascade_outputs = {}
+    
+    # File selection is based on previously scanned or selected datasets.
+    # Dropdown for file selection (Suite2p output to use)
+    file_options = list(select_files_names) if select_files_names else list(selected_files_raw.keys())
+    file_dropdown = widgets.Dropdown(
+        options=file_options,
+        description='Select file:',
+        style={'description_width': 'initial'}
+    )
+    # Dropdown for model selection with common options.
+    # These model names map to CASCADE pretrained folders.
+    model_dropdown = widgets.Dropdown(
+        options=[
+            ('Global EXC 30Hz, 50ms', 'Global_EXC_30Hz_smoothing50ms'),
+            ('Global EXC 30Hz, 50ms (high noise)', 'Global_EXC_30Hz_smoothing50ms_high_noise'),
+            ('Global EXC 30Hz, 100ms', 'Global_EXC_30Hz_smoothing100ms'),
+            ('Global EXC 30Hz, 100ms (high noise)', 'Global_EXC_30Hz_smoothing100ms_high_noise')
+        ],
+        value='Global_EXC_30Hz_smoothing50ms',
+        description='CASCADE model:',
+        style={'description_width': 'initial'},
+        layout=widgets.Layout(width='60%')
+    )
+    # Checkbox for thresholding output into discrete spikes.
+    # Leaving it off keeps the continuous spike probability trace.
+    discrete_check = widgets.Checkbox(
+        value=False,
+        description='Convert to discrete spikes (threshold small events)',
+        indent=False
+    )
+    run_button = widgets.Button(
+        description='Run CASCADE',
+        button_style='danger',
+        icon='rocket'
+    )
+    out_log = widgets.Output()
+    
+    def on_run_clicked(_):
+        """Callback to execute CASCADE spike inference when button is clicked."""
+        with out_log:
+            clear_output()
+            file_key = file_dropdown.value
+            model_name = model_dropdown.value
+            threshold_mode = discrete_check.value
+            print(f"Running CASCADE on '{file_key}' with model '{model_name}'...")
+            # Retrieve Suite2p ops and file paths
+            ops_key = f"ops_{file_key}"
+            data_ops = suite_2p_outputs.get(ops_key)
+            if data_ops is None:
+                print(f"Error: No Suite2p results found for {file_key}.")
+                return
+            save_dir = os.path.join(data_ops.get("save_path", data_ops.get("save_path0", "")))
+            F_path = os.path.join(save_dir, "F.npy")
+            Fneu_path = os.path.join(save_dir, "Fneu.npy")
+            iscell_path = os.path.join(save_dir, "iscell.npy")
+            if not os.path.isfile(F_path) or not os.path.isfile(Fneu_path):
+                print("Could not find Suite2p output files F.npy or Fneu.npy.")
+                return
+            # Load fluorescence data
+            F = np.load(F_path, allow_pickle=True)
+            Fneu = np.load(Fneu_path, allow_pickle=True)
+            # Neuropil correction
+            neucoeff = data_ops.get("neucoeff", 0.7)
+            F_corr = F - neucoeff * Fneu
+            # Compute baseline F0 per ROI (10th percentile)
+            # and ensure no zero or negative baselines
+            baseline = np.percentile(F_corr, 10, axis=1)
+            neg_mask = baseline <= 0
+            if np.any(neg_mask):
+                # Use median for those problematic cases as a fallback
+                baseline[neg_mask] = np.percentile(F_corr[neg_mask], 50, axis=1)
+                baseline[baseline <= 0] = 1e-6  # tiny positive value to avoid zero
+            # Calculate dF/F
+            # This normalization stabilizes differences across ROIs.
+            dff = (F_corr - baseline[:, None]) / baseline[:, None]
+            # Optional: warn if frame rate mismatched
+            fs = data_ops.get("fs", None)
+            if fs and abs(fs - 30) > 5:
+                print(f"Warning: Data frame rate is {fs} Hz, but using a 30Hz model. Ensure the model matches the data frame rate for best results.")
+            # Determine threshold parameter for cascade.predict
+            # 0 = non-negative (default), 1 = threshold small spikes, False = allow negatives
+            threshold_param = 1 if threshold_mode else 0
+            # Download model if not present
+            model_dir = os.path.join("Pretrained_models", model_name)
+            if not os.path.isdir(model_dir):
+                try:
+                    cascade.download_model(model_name, model_folder='Pretrained_models', verbose=1)
+                except Exception as e:
+                    print(f"Model download failed: {e}")
+                    return
+            # Predict spike probabilities using CASCADE
+            try:
+                # For large data, process in chunks to save memory
+                data_size_gb = dff.nbytes / 1e9
+                if data_size_gb < 1:
+                    spike_pred = cascade.predict(model_name, dff, model_folder='Pretrained_models',
+                                                 threshold=threshold_param, padding=0, verbosity=1)
+                else:
+                    print(f"Large data ({data_size_gb:.2f} GB) - splitting into chunks for processing...")
+                    n_cells = dff.shape[0]
+                    n_chunks = math.ceil(data_size_gb)  # ~1GB per chunk
+                    cell_indices = np.array_split(np.arange(n_cells), n_chunks)
+                    spike_pred = np.zeros_like(dff)
+                    for idx, inds in enumerate(cell_indices):
+                        print(f"Processing chunk {idx+1}/{n_chunks} (ROI {inds[0]} to {inds[-1]})...")
+                        chunk_pred = cascade.predict(model_name, dff[inds, :], model_folder='Pretrained_models',
+                                                     threshold=threshold_param, padding=0, verbosity=1)
+                        spike_pred[inds, :] = chunk_pred
+            except Exception as e:
+                print(f"Error during CASCADE prediction: {e}")
+                return
+            # Save the output to file
+            # Replace '+' in model name (if any) to avoid filesystem issues
+            save_model_name = model_name.replace("+", "plus")
+            out_file = os.path.join(save_dir, f"{save_model_name}_pred.npy")
+            try:
+                np.save(out_file, spike_pred)
+            except Exception as e:
+                print(f"Failed to save output: {e}")
+            else:
+                print(f"CASCADE inference completed. Saved predictions to: {out_file}")
+                print(f"Output shape (ROIs x frames): {spike_pred.shape}")
+            # Store in global dictionary for immediate use
+            cascade_outputs[file_key] = {
+                "model": model_name,
+                "thresholded": threshold_mode,
+                "spike_prob": spike_pred
+            }
+    # Set up UI layout
+    ui = widgets.VBox([
+        widgets.HTML("<h4>CASCADE Spike Inference</h4>"),
+        file_dropdown,
+        model_dropdown,
+        discrete_check,
+        run_button,
+        out_log
+    ])
+    display(ui)
+    return cascade_outputs
